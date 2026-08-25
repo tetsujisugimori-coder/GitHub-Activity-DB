@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}人物 · GitHub Activity DB{% endblock %}
+{% block content %}
+<section class="page-head"><div><p class="eyebrow">PEOPLE</p><h1>追跡する人物</h1></div><p>人物とGitHubアカウントを分離して管理しています。</p></section>
+<section class="card-grid">
+{% for person in people %}
+  <a class="person-card" href="/people/{{ person.id }}">
+    <div class="avatar-letter">{{ person.display_name[0] }}</div><div class="person-copy">
+      <span class="tag">{{ person.category }}</span><h2>{{ person.display_name }}</h2><code>{{ person.logins }}</code>
+      <p>{{ person.recent_repositories or '活動リポジトリは未取得' }}</p>
+      <div class="mini-metrics"><span>7日 <b>{{ person.count_7 }}</b></span><span>30日 <b>{{ person.count_30 }}</b></span></div>
+      <small>最終同期 {{ person.last_sync|localtime }}</small>
+    </div>
+  </a>
+{% endfor %}
+</section>
+{% endblock %}
+

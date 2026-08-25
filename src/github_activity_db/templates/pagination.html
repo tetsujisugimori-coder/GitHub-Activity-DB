@@ -1,0 +1,2 @@
+{% if pages > 1 %}<nav class="pagination" aria-label="ページ送り">{% if page > 1 %}<a href="?days={{ days }}&kind={{ kind }}{% if repository_id %}&repository_id={{ repository_id }}{% endif %}&page={{ page-1 }}">← 前へ</a>{% endif %}<span>{{ page }} / {{ pages }} ページ · {{ total }}件</span>{% if page < pages %}<a href="?days={{ days }}&kind={{ kind }}{% if repository_id %}&repository_id={{ repository_id }}{% endif %}&page={{ page+1 }}">次へ →</a>{% endif %}</nav>{% endif %}
+

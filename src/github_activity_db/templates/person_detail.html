@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ person.display_name }} · GitHub Activity DB{% endblock %}
+{% block content %}
+<section class="detail-head">
+  <div class="avatar-letter large">{{ person.display_name[0] }}</div><div><p class="eyebrow">{{ person.category }}</p><h1>{{ person.display_name }}</h1>
+    <p><code>{{ person.logins }}</code> · <a class="external" href="{{ person.profile_url }}" target="_blank" rel="noopener">GitHubプロフィール ↗</a></p></div>
+</section>
+<div class="notice"><strong>取得範囲</strong> {{ coverage.range_start|localtime }} 〜 {{ coverage.range_end|localtime }}。{{ limits_note }}</div>
+<section class="two-col detail-layout">
+  <div>
+    <form class="filters" method="get"><label>期間<select name="days"><option value="7" {% if days==7 %}selected{% endif %}>7日</option><option value="30" {% if days==30 %}selected{% endif %}>30日</option><option value="90" {% if days==90 %}selected{% endif %}>90日</option><option value="365" {% if days==365 %}selected{% endif %}>1年</option></select></label>
+      <label>種別<select name="kind"><option value="">すべて</option>{% for value,label in [('event','イベント'),('commit','コミット'),('pull_request','PR'),('issue','Issue'),('review','レビュー'),('issue_comment','Issueコメント'),('review_comment','レビューコメント')] %}<option value="{{ value }}" {% if kind==value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label>リポジトリ<select name="repository_id"><option value="">すべて</option>{% for repo in repositories %}<option value="{{ repo.id }}" {% if repository_id==repo.id %}selected{% endif %}>{{ repo.full_name }}</option>{% endfor %}</select></label><button>絞り込む</button>
+    </form>
+    <div class="timeline">
+    {% for item in activities %}<article class="activity"><span class="activity-dot"></span><div class="activity-meta"><span class="kind">{{ item.subtype }}</span><time>{{ item.activity_at|localtime }}</time></div><h3>{% if item.html_url %}<a href="{{ item.html_url }}" target="_blank" rel="noopener">{{ item.title or item.subtype }}</a>{% else %}{{ item.title or item.subtype }}{% endif %}</h3><p class="repo-name">{{ item.full_name or 'リポジトリ不明' }} · {{ item.source }}</p>{% if item.body %}<p class="body-preview">{{ item.body[:500] }}</p>{% endif %}</article>
+    {% else %}<p class="empty panel">条件に一致する活動はありません。</p>{% endfor %}
+    </div>
+    {% include "pagination.html" %}
+  </div>
+  <aside><article class="panel sticky"><div class="panel-head"><h2>推定テーマ</h2><span>表示中データ</span></div><p class="muted">頻出語を機械的に集計した推定です。</p>
+    <div class="topic-list">{% for topic in topics %}{% if topic.url %}<a href="{{ topic.url }}" target="_blank" rel="noopener"><span>{{ topic.term }}</span><b>{{ topic.count }}</b></a>{% else %}<div><span>{{ topic.term }}</span><b>{{ topic.count }}</b></div>{% endif %}{% else %}<p class="empty">表示できる語句はありません。</p>{% endfor %}</div>
+  </article></aside>
+</section>
+{% endblock %}
+

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}ダッシュボード · GitHub Activity DB{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><p class="eyebrow">PUBLIC ACTIVITY ARCHIVE</p><h1>公開活動の流れを、<br>手元で読み解く。</h1>
+  <p class="lead">人物イベントと監視リポジトリの差分をSQLiteへ積み上げます。</p></div>
+  <div class="sync-card"><span>最終同期</span><strong>{{ data.last_sync|localtime }}</strong>
+    {% if data.rate %}<small>API 残り {{ data.rate.rate_remaining }} / {{ data.rate.rate_limit }} · reset {{ data.rate.rate_reset|localtime }}</small>{% else %}<small>API状態はまだありません</small>{% endif %}
+  </div>
+</section>
+<div class="notice"><strong>取得範囲について</strong> {{ limits_note }}</div>
+<section class="metric-grid">
+  <article class="metric"><span>直近7日</span><strong>{{ data.count_7 }}</strong><small>保存済み活動</small></article>
+  <article class="metric"><span>直近30日</span><strong>{{ data.count_30 }}</strong><small>保存済み活動</small></article>
+  <article class="metric"><span>同期エラー</span><strong>{{ data.errors|length }}</strong><small>最近の失敗</small></article>
+</section>
+<section class="two-col">
+  <article class="panel"><div class="panel-head"><h2>人物別活動</h2><span>30日</span></div>
+    {% for item in data.people %}<a class="rank-row" href="/people/{{ item.id }}"><span>{{ item.display_name }}</span><b>{{ item.count }}</b></a>{% endfor %}
+  </article>
+  <article class="panel"><div class="panel-head"><h2>リポジトリ別活動</h2><span>30日</span></div>
+    {% for item in data.repositories %}<a class="rank-row" href="/repositories/{{ item.id }}"><span>{{ item.full_name }}</span><b>{{ item.count }}</b></a>{% endfor %}
+  </article>
+</section>
+<section class="two-col">
+  <article class="panel"><div class="panel-head"><h2>イベント種別</h2><span>30日</span></div>
+    <div class="chips">{% for item in data.types %}<span class="chip">{{ item.kind }} <b>{{ item.count }}</b></span>{% else %}<p class="empty">同期後に表示されます。</p>{% endfor %}</div>
+  </article>
+  <article class="panel"><div class="panel-head"><h2>最近の同期エラー</h2></div>
+    {% for item in data.errors %}<div class="error-row"><b>{{ item.scope_key }}</b><span>{{ item.error }}</span></div>{% else %}<p class="empty">記録された同期エラーはありません。</p>{% endfor %}
+  </article>
+</section>
+{% endblock %}
+

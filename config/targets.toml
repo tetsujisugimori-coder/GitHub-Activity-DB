@@ -1,0 +1,81 @@
+[app]
+db_path = "data/github_activity.db"
+api_version = "2022-11-28"
+user_agent = "GitHub-Activity-DB/0.1"
+request_timeout_seconds = 30
+max_retries = 3
+max_pages = 10
+per_page = 100
+people_initial_days = 30
+repository_initial_days = 90
+linux_initial_days = 30
+overlap_minutes = 5
+host = "127.0.0.1"
+port = 8000
+
+[[people]]
+display_name = "杉森哲二"
+category = "自分"
+accounts = ["tetsujisugimori-coder"]
+
+[[people]]
+display_name = "Guido van Rossum"
+category = "著名開発者"
+accounts = ["gvanrossum"]
+
+[[people]]
+display_name = "Fabrice Bellard"
+category = "著名開発者"
+accounts = ["bellard"]
+
+[[people]]
+display_name = "Anders Hejlsberg"
+category = "著名開発者"
+accounts = ["ahejlsberg"]
+
+[[people]]
+display_name = "Linus Torvalds"
+category = "著名開発者"
+accounts = ["torvalds"]
+
+[[organizations]]
+login = "microsoft"
+display_name = "Microsoft"
+
+[[repositories]]
+full_name = "microsoft/vscode"
+watched = true
+
+[[repositories]]
+full_name = "microsoft/TypeScript"
+watched = true
+
+[[repositories]]
+full_name = "microsoft/PowerToys"
+watched = true
+
+[[repositories]]
+full_name = "bellard/quickjs"
+watched = true
+
+[[repositories]]
+full_name = "bellard/mquickjs"
+watched = true
+
+[[repositories]]
+full_name = "torvalds/linux"
+watched = true
+initial_days = 30
+
+[[repositories]]
+full_name = "python/cpython"
+watched = true
+
+[[repositories]]
+full_name = "microsoft/typeagent-py"
+watched = true
+
+[[repositories]]
+full_name = "gvanrossum/gvanrossum.github.io"
+watched = true
+

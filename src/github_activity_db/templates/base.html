@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}GitHub Activity DB{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">G</span><span>GitHub Activity DB</span></a>
+    <nav aria-label="メインナビゲーション">
+      <a href="/">ダッシュボード</a><a href="/people">人物</a>
+      <a href="/repositories">リポジトリ</a><a href="/compare">比較</a>
+    </nav>
+  </header>
+  <main>
+    {% if token_missing %}<div class="notice warning"><strong>トークン未設定</strong> 公開APIは利用できますが、低いレート制限が適用されます。</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer><p>{{ limits_note }}</p><p>ローカル専用 · 取得時刻はUTC、表示はローカル時刻</p></footer>
+</body>
+</html>
+

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}比較 · GitHub Activity DB{% endblock %}
+{% block content %}
+<section class="page-head"><div><p class="eyebrow">COMPARE</p><h1>活動を比較する</h1></div><p>コミット以外の活動も種類ごとに比較します。</p></section>
+<form class="compare-form" method="get"><fieldset><legend>期間</legend>{% for value in [7,30,90] %}<label class="check"><input type="radio" name="days" value="{{ value }}" {% if days==value %}checked{% endif %}>{{ value }}日</label>{% endfor %}</fieldset>
+<fieldset><legend>人物</legend>{% for item in people_options %}<label class="check"><input type="checkbox" name="person" value="{{ item.id }}" {% if item.id in selected_people %}checked{% endif %}>{{ item.display_name }}</label>{% endfor %}</fieldset>
+<fieldset><legend>リポジトリ</legend><div class="check-grid">{% for item in repo_options %}<label class="check"><input type="checkbox" name="repo" value="{{ item.id }}" {% if item.id in selected_repos %}checked{% endif %}>{{ item.full_name }}</label>{% endfor %}</div></fieldset><button>比較を更新</button></form>
+{% for heading, rows in [('人物',data.people),('リポジトリ',data.repositories)] %}<section class="panel compare-panel"><div class="panel-head"><h2>{{ heading }}の比較</h2><span>{{ days }}日</span></div>{% for row in rows %}<div class="comparison-row"><h3>{{ row.label }}</h3><div class="bar-grid">{% for kind in data.kinds %}<div><span>{{ kind }}</span><div class="bar-track"><i style="width: {{ [row.counts.get(kind,0)*8,100]|min }}%"></i></div><b>{{ row.counts.get(kind,0) }}</b></div>{% endfor %}</div></div>{% else %}<p class="empty">上の項目を選択すると比較できます。</p>{% endfor %}</section>{% endfor %}
+{% endblock %}
+

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}リポジトリ · GitHub Activity DB{% endblock %}
+{% block content %}
+<section class="page-head"><div><p class="eyebrow">REPOSITORIES</p><h1>リポジトリ</h1></div><p>発見済みと監視対象を分けて表示します。</p></section>
+<div class="table-wrap"><table><thead><tr><th>リポジトリ</th><th>状態</th><th>言語</th><th>Stars</th><th>Forks</th><th>Commits</th><th>最終同期</th></tr></thead><tbody>
+{% for repo in repositories %}<tr><td><a href="/repositories/{{ repo.id }}"><strong>{{ repo.full_name }}</strong></a><small>{{ repo.description or '説明未取得' }}</small></td><td><span class="tag {{ 'active' if repo.watched else '' }}">{{ '監視対象' if repo.watched else '発見済み' }}</span></td><td>{{ repo.language or '—' }}</td><td>{{ repo.stars }}</td><td>{{ repo.forks }}</td><td>{{ repo.commit_count }}</td><td>{{ repo.last_sync|localtime }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
+
