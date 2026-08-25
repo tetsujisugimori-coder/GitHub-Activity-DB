@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from github_activity_db.github_client import GitHubAPIError, GitHubClient, RateLimitError
-from github_activity_db.migrations import utc_now
+from github_activity_db.migrations import migrate, utc_now
 from github_activity_db.sync_service import SyncService
 
 
@@ -345,3 +345,95 @@ def test_review_link_pagination_resumes_with_fixed_range(db, settings):
     assert state["last_success_at"] == "2026-08-10T00:00:00Z"
     assert db.execute("SELECT COUNT(*) FROM pull_request_reviews").fetchone()[0] == 2
     assert calls == 2
+
+
+def test_repaired_cursor_state_completes_at_original_range_end(db, settings):
+    db.execute("DELETE FROM schema_migrations WHERE version=3")
+    db.execute(
+        """INSERT INTO sync_state(scope_type, scope_key, stage, cursor_url, last_success_at,
+               range_start, range_end, status, last_error, metadata_json, updated_at)
+           VALUES ('person', 'gvanrossum', 'events', ?, ?, ?, ?, 'incomplete', ?, ?, ?)""",
+        (
+            "https://api.github.com/users/gvanrossum/events/public?page=2",
+            "2026-08-20T00:00:00Z",
+            "2026-08-10T00:00:00Z",
+            "2026-08-20T00:00:00Z",
+            "page limit",
+            '{"page":2}',
+            "2026-08-25T00:00:00Z",
+        ),
+    )
+    db.commit()
+    migrate(db)
+
+    repaired = db.execute(
+        "SELECT last_success_at, cursor_url FROM sync_state WHERE stage='events'"
+    ).fetchone()
+    assert tuple(repaired) == (
+        "2026-08-10T00:00:00Z",
+        "https://api.github.com/users/gvanrossum/events/public?page=2",
+    )
+
+    requested = []
+
+    def handler(request):
+        requested.append(str(request.url))
+        resumed = event("repaired-resume")
+        resumed["created_at"] = "2026-08-15T00:00:00Z"
+        return httpx.Response(200, json=[resumed])
+
+    service, api = make_service(
+        db, settings, handler, now=lambda: "2026-08-25T00:00:00Z"
+    )
+    with api:
+        result = service.sync_person("gvanrossum")
+
+    state = db.execute("SELECT * FROM sync_state WHERE stage='events'").fetchone()
+    assert requested == ["https://api.github.com/users/gvanrossum/events/public?page=2"]
+    assert result.status == "success"
+    assert state["cursor_url"] is None
+    assert state["last_success_at"] == "2026-08-20T00:00:00Z"
+
+
+def test_repaired_cursorless_state_refetches_without_a_gap(db, settings):
+    db.execute("DELETE FROM schema_migrations WHERE version=3")
+    db.execute(
+        """INSERT INTO sync_state(scope_type, scope_key, stage, cursor_url, last_success_at,
+               range_start, range_end, status, last_error, updated_at)
+           VALUES ('person', 'gvanrossum', 'events', NULL, ?, ?, ?, 'error', ?, ?)""",
+        (
+            "2026-08-20T00:00:00Z",
+            "2026-08-10T00:00:00Z",
+            "2026-08-20T00:00:00Z",
+            "temporary failure",
+            "2026-08-25T00:00:00Z",
+        ),
+    )
+    db.commit()
+    migrate(db)
+
+    requested = []
+
+    def handler(request):
+        requested.append(request.url)
+        boundary = event("repaired-boundary")
+        boundary["created_at"] = "2026-08-10T00:00:00Z"
+        return httpx.Response(200, json=[boundary])
+
+    service, api = make_service(
+        db, settings, handler, now=lambda: "2026-08-25T00:00:00Z"
+    )
+    with api:
+        result = service.sync_person("gvanrossum")
+
+    state = db.execute("SELECT * FROM sync_state WHERE stage='events'").fetchone()
+    assert str(requested[0]).startswith(
+        "https://api.github.com/users/gvanrossum/events/public"
+    )
+    assert requested[0].params.get("page") is None
+    assert result.status == "success"
+    assert state["range_start"] == "2026-08-09T23:55:00Z"
+    assert state["last_success_at"] == "2026-08-25T00:00:00Z"
+    assert db.execute(
+        "SELECT COUNT(*) FROM events WHERE github_event_id='repaired-boundary'"
+    ).fetchone()[0] == 1

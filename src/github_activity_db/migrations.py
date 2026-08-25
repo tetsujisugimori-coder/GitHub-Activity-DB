@@ -145,7 +145,20 @@ CREATE INDEX idx_sync_state_status ON sync_state(status, updated_at DESC);
     (2, "sync_checkpoint_uses_range_end", r"""
 UPDATE sync_state
 SET last_success_at = range_end
-WHERE last_success_at IS NOT NULL AND range_end IS NOT NULL;
+WHERE range_end IS NOT NULL
+  AND status IN ('success', 'not_modified')
+  AND cursor_url IS NULL;
+"""),
+    (3, "repair_incomplete_sync_checkpoints", r"""
+UPDATE sync_state
+SET last_success_at = range_start
+WHERE last_success_at = range_end
+  AND range_start IS NOT NULL
+  AND (
+    status IS NULL
+    OR status NOT IN ('success', 'not_modified')
+    OR cursor_url IS NOT NULL
+  );
 """),
 )
 
