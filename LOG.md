@@ -46,7 +46,7 @@ person:gvanrossum:events: success / pages=2 seen=100 saved=100
 31ae0bb Initial implementation of GitHub Activity DB
 ```
 
-### GitHubへのプッシュ状態
+### GitHubへのプッシュ
 
 - GitHub CLIは `tetsujisugimori-coder` アカウントでログイン済み。
 - 次の同名リポジトリがGitHub上に存在し、空の公開リポジトリであることを確認した。
@@ -56,14 +56,18 @@ https://github.com/tetsujisugimori-coder/GitHub-Activity-DB
 visibility: PUBLIC
 ```
 
-- 公開リポジトリへのソース公開は取り消しコストがあるため、明示確認なしではプッシュしなかった。
-- `origin` はまだ登録しておらず、GitHubへのプッシュも未実施。
-- 次回は、公開のままプッシュするか、非公開へ変更してからプッシュするかを決める。
+- 公開リポジトリへのソース公開について利用者の明示承認を得た。
+- 上記URLを `origin` として登録し、`main` ブランチを公開プッシュした。
+- GitHub上の可視性が `PUBLIC`、デフォルトブランチが `main` であることを確認した。
+- ローカルの `main` は `origin/main` を追跡するよう設定した。
+- 初回プッシュ時の最新コミットは次のとおり。
+
+```text
+72fedcf Document initial setup and verification
+```
 
 ### 次回候補
 
 1. トークン認証済み状態で `sync --person gvanrossum` を再実行し、警告が出ないことを確認する。
-2. GitHubリポジトリの公開・非公開を決定する。
-3. `LOG.md` を追加コミットする。
-4. `origin` を登録して `main` をプッシュする。
-5. 必要に応じてWindowsタスクスケジューラで定期同期を設定する。
+2. 必要に応じてWindowsタスクスケジューラで定期同期を設定する。
+3. 今後の変更もテスト後にコミットし、`origin/main` へプッシュする。
