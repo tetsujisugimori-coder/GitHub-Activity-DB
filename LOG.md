@@ -42,9 +42,7 @@ person:gvanrossum:events: success / pages=2 seen=100 saved=100
 - ステージ済みファイルに実トークン形式の文字列がないことを確認した。
 - 初回コミットを作成した。
 
-```text
-31ae0bb Initial implementation of GitHub Activity DB
-```
+初版実装をルートコミットとして記録した。
 
 ### GitHubへのプッシュ
 
@@ -60,11 +58,7 @@ visibility: PUBLIC
 - 上記URLを `origin` として登録し、`main` ブランチを公開プッシュした。
 - GitHub上の可視性が `PUBLIC`、デフォルトブランチが `main` であることを確認した。
 - ローカルの `main` は `origin/main` を追跡するよう設定した。
-- 初回プッシュ時の最新コミットは次のとおり。
-
-```text
-72fedcf Document initial setup and verification
-```
+- 初回実装、作業ログ追加、公開プッシュ記録の順でコミットした。
 
 ### 次回候補
 

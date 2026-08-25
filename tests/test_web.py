@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 from github_activity_db.migrations import utc_now
@@ -7,9 +9,9 @@ from github_activity_db.web import create_app, local_time
 
 
 def test_local_time_conversion():
-    rendered = local_time("2026-08-25T00:00:00Z")
-    assert rendered.startswith("2026-08-25")
-    assert rendered != "2026-08-25T00:00:00Z"
+    source = "2026-08-25T00:00:00Z"
+    expected = datetime(2026, 8, 25, tzinfo=UTC).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    assert local_time(source) == expected
 
 
 def test_html_is_escaped_and_activity_is_paginated(db, settings):

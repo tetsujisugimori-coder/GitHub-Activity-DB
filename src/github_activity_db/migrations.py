@@ -142,6 +142,11 @@ CREATE INDEX idx_review_comments_repo_date ON review_comments(repository_id, cre
 CREATE INDEX idx_releases_repo_date ON releases(repository_id, published_at DESC);
 CREATE INDEX idx_sync_state_status ON sync_state(status, updated_at DESC);
 """),
+    (2, "sync_checkpoint_uses_range_end", r"""
+UPDATE sync_state
+SET last_success_at = range_end
+WHERE last_success_at IS NOT NULL AND range_end IS NOT NULL;
+"""),
 )
 
 
@@ -208,13 +213,12 @@ def seed_targets(connection: sqlite3.Connection, settings: Settings) -> None:
             repository_id = connection.execute(
                 "SELECT id FROM repositories WHERE full_name=? COLLATE NOCASE", (repo.full_name,)
             ).fetchone()[0]
-            if repo.watched:
-                connection.execute(
-                    """INSERT INTO watched_repositories(repository_id, enabled, initial_days, added_at)
-                       VALUES (?, 1, ?, ?) ON CONFLICT(repository_id) DO UPDATE SET
-                       enabled=1, initial_days=excluded.initial_days""",
-                    (repository_id, repo.initial_days, now),
-                )
+            connection.execute(
+                """INSERT INTO watched_repositories(repository_id, enabled, initial_days, added_at)
+                   VALUES (?, ?, ?, ?) ON CONFLICT(repository_id) DO UPDATE SET
+                   enabled=excluded.enabled, initial_days=excluded.initial_days""",
+                (repository_id, int(repo.watched), repo.initial_days, now),
+            )
 
 
 def initialize_database(connection: sqlite3.Connection, settings: Settings) -> None:

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 from .config import Settings
 from .github_client import APIResponse, GitHubAPIError, GitHubClient, RateLimitError
@@ -28,8 +28,9 @@ def _iso(value: str | None) -> str | None:
     return parsed.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _days_ago(days: int) -> str:
-    return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _subtract_days(value: str, days: int) -> str:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (parsed - timedelta(days=days)).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 @dataclass
@@ -44,10 +45,11 @@ class SyncResult:
 
 class SyncService:
     def __init__(self, connection: sqlite3.Connection, settings: Settings,
-                 client: GitHubClient) -> None:
+                 client: GitHubClient, *, now: Callable[[], str] = utc_now) -> None:
         self.db = connection
         self.settings = settings
         self.client = client
+        self._now = now
 
     def _person_for_login(self, login: str | None) -> tuple[int | None, int | None]:
         if not login:
@@ -67,7 +69,7 @@ class SyncService:
         owner, name = full_name.split("/", 1)
         cursor = self.db.execute(
             "INSERT INTO repositories(full_name, owner_login, name, html_url, discovered_at) VALUES (?,?,?,?,?)",
-            (full_name, owner, name, f"https://github.com/{full_name}", utc_now()),
+            (full_name, owner, name, f"https://github.com/{full_name}", self._now()),
         )
         return int(cursor.lastrowid)
 
@@ -82,7 +84,7 @@ class SyncService:
             reset_iso = datetime.fromtimestamp(int(reset), UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
         values = (
             endpoint, headers.get("etag"), int(headers["x-poll-interval"]) if headers.get("x-poll-interval", "").isdigit() else None,
-            utc_now(), int(headers["x-ratelimit-limit"]) if headers.get("x-ratelimit-limit", "").isdigit() else None,
+            self._now(), int(headers["x-ratelimit-limit"]) if headers.get("x-ratelimit-limit", "").isdigit() else None,
             int(headers["x-ratelimit-remaining"]) if headers.get("x-ratelimit-remaining", "").isdigit() else None,
             reset_iso, int(headers["retry-after"]) if headers.get("retry-after", "").isdigit() else None,
             response.status_code,
@@ -117,7 +119,7 @@ class SyncService:
     def _run_start(self, scope_type: str, scope_key: str) -> int:
         cursor = self.db.execute(
             "INSERT INTO sync_runs(scope_type, scope_key, started_at, status) VALUES (?,?,?,'running')",
-            (scope_type, scope_key, utc_now()),
+            (scope_type, scope_key, self._now()),
         )
         self.db.commit()
         return int(cursor.lastrowid)
@@ -126,7 +128,7 @@ class SyncService:
         self.db.execute(
             """UPDATE sync_runs SET finished_at=?, status=?, items_seen=?, items_saved=?,
                pages_fetched=?, error=? WHERE id=?""",
-            (utc_now(), result.status, result.seen, result.saved, result.pages, error, run_id),
+            (self._now(), result.status, result.seen, result.saved, result.pages, error, run_id),
         )
         self.db.commit()
 
@@ -151,32 +153,94 @@ class SyncService:
                  status=excluded.status, last_error=excluded.last_error,
                  metadata_json=COALESCE(excluded.metadata_json, sync_state.metadata_json),
                  updated_at=excluded.updated_at""",
-            (scope_type, scope_key, stage, cursor_url, utc_now() if success else None,
+            (scope_type, scope_key, stage, cursor_url, range_end if success else None,
              range_start, range_end, status, error, _json(metadata) if metadata else None,
-             utc_now(), 1 if success else 0),
+             self._now(), 1 if success else 0),
         )
+
+    def _normalize_range(self, since: str | None, until: str | None) -> tuple[str | None, str | None]:
+        try:
+            start = _iso(since)
+        except ValueError as exc:
+            raise ValueError(f"--sinceの日時形式が正しくありません: {since}") from exc
+        try:
+            end = _iso(until)
+        except ValueError as exc:
+            raise ValueError(f"--untilの日時形式が正しくありません: {until}") from exc
+        if start and end and start > end:
+            raise ValueError("--sinceは--until以前の日時を指定してください")
+        return start, end
+
+    def _stage_range(self, scope_type: str, scope_key: str, stage: str,
+                     initial_days: int, explicit_start: str | None,
+                     explicit_end: str | None, run_end: str) -> tuple[str, str]:
+        state = self._state(scope_type, scope_key, stage)
+        if state and state["cursor_url"] and state["range_start"] and state["range_end"]:
+            normal_resume = explicit_start is None and explicit_end is None
+            explicit_resume = (
+                (explicit_start is None or explicit_start == state["range_start"])
+                and (explicit_end is None or explicit_end == state["range_end"])
+            )
+            if normal_resume or explicit_resume:
+                return state["range_start"], state["range_end"]
+        if explicit_start:
+            start = explicit_start
+        elif state and state["last_success_at"]:
+            last = datetime.fromisoformat(state["last_success_at"].replace("Z", "+00:00"))
+            start = (last - timedelta(minutes=self.settings.overlap_minutes)).isoformat(
+                timespec="seconds"
+            ).replace("+00:00", "Z")
+        else:
+            start = _subtract_days(run_end, initial_days)
+        end = explicit_end or run_end
+        if start > end:
+            raise ValueError(f"{scope_key} / {stage} の取得開始日時が終了日時より後です")
+        return start, end
 
     def _range_start(self, scope_type: str, scope_key: str, stage: str,
                      initial_days: int, explicit_since: str | None) -> str:
-        if explicit_since:
-            return _iso(explicit_since) or explicit_since
-        state = self._state(scope_type, scope_key, stage)
-        if state and state["last_success_at"]:
-            last = datetime.fromisoformat(state["last_success_at"].replace("Z", "+00:00"))
-            return (last - timedelta(minutes=self.settings.overlap_minutes)).isoformat(timespec="seconds").replace("+00:00", "Z")
-        return _days_ago(initial_days)
+        explicit_start, _ = self._normalize_range(explicit_since, None)
+        start, _ = self._stage_range(
+            scope_type, scope_key, stage, initial_days, explicit_start, None, self._now()
+        )
+        return start
+
+    @staticmethod
+    def _item_time(item: dict[str, Any], *fields: str) -> str | None:
+        for field in fields:
+            value = _iso(item.get(field))
+            if value:
+                return value
+        return None
+
+    @classmethod
+    def _in_range(cls, item: dict[str, Any], start: str, end: str,
+                  *fields: str) -> bool:
+        value = cls._item_time(item, *fields)
+        return bool(value and start <= value <= end)
+
+    @staticmethod
+    def _commit_time(item: dict[str, Any]) -> str | None:
+        commit = item.get("commit") or {}
+        author = commit.get("author") or {}
+        committer = commit.get("committer") or {}
+        return _iso(author.get("date") or committer.get("date"))
+
+    def _commit_in_range(self, item: dict[str, Any], start: str, end: str) -> bool:
+        value = self._commit_time(item)
+        return bool(value and start <= value <= end)
 
     def _paged(self, *, scope_type: str, scope_key: str, stage: str, path: str,
                params: dict[str, Any] | None, start: str | None, end: str | None,
                saver: Callable[[dict[str, Any]], bool], max_pages: int | None = None,
-               resume: bool = True, conditional: bool = False,
+               conditional: bool = False,
                accept: Callable[[dict[str, Any]], bool] | None = None) -> SyncResult:
         result = SyncResult(f"{scope_type}:{scope_key}:{stage}")
         state = self._state(scope_type, scope_key, stage)
-        matching_explicit_range = bool(
+        matching_range = bool(
             state and state["cursor_url"] and state["range_start"] == start and state["range_end"] == end
         )
-        url = state["cursor_url"] if state and state["cursor_url"] and (resume or matching_explicit_range) else path
+        url = state["cursor_url"] if matching_range else path
         request_params = None if url != path else params
         page_limit = max_pages or self.settings.max_pages
         try:
@@ -212,8 +276,11 @@ class SyncService:
         except Exception as exc:
             self.db.rollback()
             current = self._state(scope_type, scope_key, stage)
+            matching_range = bool(
+                current and current["range_start"] == start and current["range_end"] == end
+            )
             self._set_state(scope_type, scope_key, stage, status="error",
-                            cursor_url=current["cursor_url"] if current else None,
+                            cursor_url=current["cursor_url"] if matching_range else None,
                             range_start=start, range_end=end, error=str(exc))
             self.db.commit()
             raise
@@ -234,15 +301,20 @@ class SyncService:
                     result.message = "X-Poll-Intervalの待機中"
                     self._run_finish(run_id, result)
                     return result
-            start = _days_ago(self.settings.people_initial_days)
+            run_end = self._now()
+            start, end = self._stage_range(
+                "person", login, "events", self.settings.people_initial_days,
+                None, None, run_end,
+            )
 
             def save(event: dict[str, Any]) -> bool:
                 return self._save_event(person_id, account_id, event)
 
             result = self._paged(
                 scope_type="person", scope_key=login, stage="events", path=endpoint,
-                params={"per_page": self.settings.per_page}, start=start, end=utc_now(),
+                params={"per_page": self.settings.per_page}, start=start, end=end,
                 saver=save, max_pages=min(3, self.settings.max_pages), conditional=True,
+                accept=lambda item: self._in_range(item, start, end, "created_at"),
             )
             self._run_finish(run_id, result)
             return result
@@ -286,6 +358,7 @@ class SyncService:
 
     def sync_repository(self, full_name: str, *, since: str | None = None,
                         until: str | None = None) -> SyncResult:
+        explicit_start, explicit_end = self._normalize_range(since, until)
         repository_id = self._repository(full_name)
         watched = self.db.execute(
             "SELECT initial_days FROM watched_repositories WHERE repository_id=? AND enabled=1",
@@ -296,22 +369,13 @@ class SyncService:
         run_id = self._run_start("repository", full_name)
         total = SyncResult(f"repository:{full_name}")
         try:
+            run_end = self._now()
             metadata = self._get(f"/repos/{full_name}", conditional=True)
             total.pages += 1
             if metadata.status_code != 304 and isinstance(metadata.data, dict):
                 total.saved += int(self._save_repository(repository_id, metadata.data))
             initial_days = watched["initial_days"] or self.settings.repository_initial_days
-            start = self._range_start("repository", full_name, "commits", initial_days, since)
-            end = _iso(until) if until else utc_now()
-            if since and not until:
-                prior_range = self.db.execute(
-                    """SELECT range_end FROM sync_state WHERE scope_type='repository'
-                       AND scope_key=? COLLATE NOCASE AND range_start=? AND cursor_url IS NOT NULL
-                       ORDER BY updated_at DESC LIMIT 1""", (full_name, start),
-                ).fetchone()
-                if prior_range and prior_range["range_end"]:
-                    end = prior_range["range_end"]
-            resume = since is None and until is None
+
             def merge(stage_result: SyncResult) -> None:
                 total.pages += stage_result.pages
                 total.seen += stage_result.seen
@@ -322,26 +386,34 @@ class SyncService:
 
             remaining = self.settings.max_pages - total.pages
             if remaining > 0:
+                start, end = self._stage_range(
+                    "repository", full_name, "commits", initial_days,
+                    explicit_start, explicit_end, run_end,
+                )
                 merge(self._paged(
                     scope_type="repository", scope_key=full_name, stage="commits",
                     path=f"/repos/{full_name}/commits",
                     params={"since": start, "until": end, "per_page": self.settings.per_page},
                     start=start, end=end, saver=lambda item: self._save_commit(repository_id, item),
-                    resume=resume, max_pages=remaining,
+                    accept=lambda item: self._commit_in_range(item, start, end),
+                    max_pages=remaining,
                 ))
-            for stage, endpoint, saver, date_field in (
-                ("issues", "issues", self._save_issue, "updated_at"),
-                ("pull_requests", "pulls", self._save_pull, "updated_at"),
-                ("issue_comments", "issues/comments", self._save_issue_comment, "updated_at"),
-                ("review_comments", "pulls/comments", self._save_review_comment, "updated_at"),
-                ("releases", "releases", self._save_release, "published_at"),
+            for stage, endpoint, saver, date_fields in (
+                ("issues", "issues", self._save_issue, ("updated_at",)),
+                ("pull_requests", "pulls", self._save_pull, ("updated_at",)),
+                ("issue_comments", "issues/comments", self._save_issue_comment, ("updated_at",)),
+                ("review_comments", "pulls/comments", self._save_review_comment, ("updated_at",)),
+                ("releases", "releases", self._save_release, ("published_at", "created_at")),
             ):
                 remaining = self.settings.max_pages - total.pages
                 if remaining <= 0:
                     total.status = "incomplete"
                     total.message = f"{self.settings.max_pages}ページ上限で中断。次回再開します"
                     break
-                stage_start = self._range_start("repository", full_name, stage, initial_days, since)
+                stage_start, stage_end = self._stage_range(
+                    "repository", full_name, stage, initial_days,
+                    explicit_start, explicit_end, run_end,
+                )
                 params: dict[str, Any] = {"per_page": self.settings.per_page}
                 if stage == "issues":
                     params.update({"state": "all", "since": stage_start, "sort": "updated", "direction": "asc"})
@@ -349,17 +421,25 @@ class SyncService:
                     params.update({"state": "all", "sort": "updated", "direction": "desc"})
                 elif stage in ("issue_comments", "review_comments"):
                     params.update({"since": stage_start, "sort": "updated", "direction": "asc"})
-                accept = lambda item, field=date_field, boundary=stage_start: not item.get(field) or item[field] >= boundary
+                accept = lambda item, fields=date_fields, boundary=stage_start, boundary_end=stage_end: (
+                    self._in_range(item, boundary, boundary_end, *fields)
+                )
                 merge(self._paged(
                     scope_type="repository", scope_key=full_name, stage=stage,
                     path=f"/repos/{full_name}/{endpoint}", params=params,
-                    start=stage_start, end=end,
+                    start=stage_start, end=stage_end,
                     saver=lambda item, fn=saver: fn(repository_id, item),
-                    resume=resume, accept=accept, max_pages=remaining,
+                    accept=accept, max_pages=remaining,
                 ))
             remaining = self.settings.max_pages - total.pages
             if remaining > 0:
-                merge(self._sync_reviews(repository_id, full_name, start, end, remaining, resume))
+                review_start, review_end = self._stage_range(
+                    "repository", full_name, "reviews", initial_days,
+                    explicit_start, explicit_end, run_end,
+                )
+                merge(self._sync_reviews(
+                    repository_id, full_name, review_start, review_end, remaining,
+                ))
             else:
                 total.status = "incomplete"
                 total.message = f"{self.settings.max_pages}ページ上限で中断。次回再開します"
@@ -508,55 +588,121 @@ class SyncService:
         )
         return self.db.total_changes > before
 
+    def _next_review_pull(self, repository_id: int, start: str, end: str,
+                          after_updated_at: str | None,
+                          after_number: int | None) -> sqlite3.Row | None:
+        sql = """SELECT number, updated_at FROM pull_requests
+                 WHERE repository_id=? AND updated_at>=? AND updated_at<=?"""
+        params: list[Any] = [repository_id, start, end]
+        if after_updated_at and after_number is not None:
+            sql += " AND (updated_at < ? OR (updated_at = ? AND number < ?))"
+            params.extend((after_updated_at, after_updated_at, after_number))
+        sql += " ORDER BY updated_at DESC, number DESC LIMIT 1"
+        return self.db.execute(sql, params).fetchone()
+
     def _sync_reviews(self, repository_id: int, full_name: str, start: str, end: str,
-                      max_pages: int, resume: bool) -> SyncResult:
+                      max_pages: int) -> SyncResult:
         result = SyncResult(f"repository:{full_name}:reviews")
         state = self._state("repository", full_name, "reviews")
+        matching_range = bool(
+            state and state["cursor_url"]
+            and state["range_start"] == start and state["range_end"] == end
+        )
+        cursor = state["cursor_url"] if matching_range else "review-next-pull"
         cursor_meta: dict[str, Any] = {}
-        matching_range = bool(state and state["range_start"] == start and state["range_end"] == end)
-        if state and state["cursor_url"] and state["metadata_json"] and (resume or matching_range):
+        if matching_range and state["metadata_json"]:
             try:
                 cursor_meta = json.loads(state["metadata_json"])
             except json.JSONDecodeError:
                 cursor_meta = {}
-        sql = """SELECT number, updated_at FROM pull_requests
-                 WHERE repository_id=? AND updated_at>=?"""
-        params: list[Any] = [repository_id, start]
-        if cursor_meta.get("updated_at") and cursor_meta.get("number") is not None:
-            sql += " AND (updated_at < ? OR (updated_at = ? AND number < ?))"
-            params.extend((cursor_meta["updated_at"], cursor_meta["updated_at"], cursor_meta["number"]))
-        sql += " ORDER BY updated_at DESC, number DESC LIMIT ?"
-        params.append(max_pages + 1)
-        candidates = self.db.execute(sql, params).fetchall()
-        pulls = candidates[:max_pages]
-        has_more = len(candidates) > max_pages
+        after_updated_at = cursor_meta.get("updated_at")
+        after_number = cursor_meta.get("number")
+        pull_number = cursor_meta.get("pull_number")
+        pull_updated_at = cursor_meta.get("pull_updated_at")
+
         try:
-            for row in pulls:
-                response = self._get(
-                    f"/repos/{full_name}/pulls/{row['number']}/reviews",
-                    params={"per_page": self.settings.per_page},
+            while result.pages < max_pages:
+                if cursor == "review-next-pull":
+                    candidate = self._next_review_pull(
+                        repository_id, start, end, after_updated_at, after_number,
+                    )
+                    if candidate is None:
+                        self._set_state(
+                            "repository", full_name, "reviews", status="success",
+                            cursor_url=None, range_start=start, range_end=end,
+                            success=True, metadata={"complete": True},
+                        )
+                        self.db.commit()
+                        return result
+                    pull_number = candidate["number"]
+                    pull_updated_at = candidate["updated_at"]
+                    cursor = (
+                        f"/repos/{full_name}/pulls/{pull_number}/reviews"
+                        f"?per_page={self.settings.per_page}"
+                    )
+
+                metadata = {
+                    "updated_at": after_updated_at,
+                    "number": after_number,
+                    "pull_number": pull_number,
+                    "pull_updated_at": pull_updated_at,
+                }
+                self._set_state(
+                    "repository", full_name, "reviews", status="incomplete",
+                    cursor_url=cursor, range_start=start, range_end=end,
+                    metadata=metadata,
                 )
+                self.db.commit()
+                response = self._get(cursor)
                 result.pages += 1
                 for item in response.data if isinstance(response.data, list) else []:
                     result.seen += 1
-                    result.saved += int(self._save_review(repository_id, row["number"], item))
+                    if self._in_range(item, start, end, "submitted_at"):
+                        result.saved += int(self._save_review(repository_id, int(pull_number), item))
+
+                if response.next_url:
+                    cursor = response.next_url
+                    self._set_state(
+                        "repository", full_name, "reviews", status="incomplete",
+                        cursor_url=cursor, range_start=start, range_end=end,
+                        metadata=metadata,
+                    )
+                else:
+                    after_updated_at = str(pull_updated_at)
+                    after_number = int(pull_number)
+                    pull_number = None
+                    pull_updated_at = None
+                    cursor = "review-next-pull"
+                    self._set_state(
+                        "repository", full_name, "reviews", status="incomplete",
+                        cursor_url=cursor, range_start=start, range_end=end,
+                        metadata={"updated_at": after_updated_at, "number": after_number},
+                    )
                 self.db.commit()
-            if has_more and pulls:
-                last = pulls[-1]
-                result.status = "incomplete"
-                result.message = f"{max_pages}ページ上限でレビュー収集を中断。次回再開します"
-                self._set_state("repository", full_name, "reviews", status="incomplete",
-                                cursor_url="review-keyset", range_start=start, range_end=end,
-                                metadata={"updated_at": last["updated_at"], "number": last["number"]})
-            else:
-                self._set_state("repository", full_name, "reviews", status="success", cursor_url=None,
-                                range_start=start, range_end=end, success=True, metadata={"complete": True})
-            self.db.commit()
+
+                if result.pages >= max_pages:
+                    if cursor == "review-next-pull" and self._next_review_pull(
+                        repository_id, start, end, after_updated_at, after_number,
+                    ) is None:
+                        self._set_state(
+                            "repository", full_name, "reviews", status="success",
+                            cursor_url=None, range_start=start, range_end=end,
+                            success=True, metadata={"complete": True},
+                        )
+                        self.db.commit()
+                        return result
+                    result.status = "incomplete"
+                    result.message = f"{max_pages}ページ上限でレビュー収集を中断。次回再開します"
+                    return result
             return result
         except Exception as exc:
             self.db.rollback()
-            self._set_state("repository", full_name, "reviews", status="error", cursor_url=None,
-                            range_start=start, range_end=end, error=str(exc))
+            current = self._state("repository", full_name, "reviews")
+            self._set_state(
+                "repository", full_name, "reviews", status="error",
+                cursor_url=current["cursor_url"] if current else cursor,
+                range_start=start, range_end=end, error=str(exc),
+            )
             self.db.commit()
             raise
 
