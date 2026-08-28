@@ -85,9 +85,41 @@ python -m github_activity_db sync --repo python/cpython --since 2026-05-01 --unt
 python -m github_activity_db status
 python -m github_activity_db report --days 30
 python -m github_activity_db serve
+python -m github_activity_db mcp
 ```
 
 Web画面は <http://127.0.0.1:8000> で開きます。外部インターフェースへはバインドしません。
+
+## 試験用MCPサーバー
+
+MCPサーバーは保存済みSQLiteを読み取り専用で開き、次の3ツールをAIクライアントへ公開します。GitHub APIへの同期、任意SQL、DB更新は公開しません。
+
+- `get_database_status`: DB件数、最終同期、未完了・失敗状況
+- `list_tracked_people`: 追跡人物と期間内の活動件数
+- `search_activities`: 語句・人物・リポジトリ・活動種別による検索
+
+先に通常のCLIでDBを初期化・同期してから起動してください。stdio方式なので、単独実行時に画面が止まって見えるのは、MCPクライアントからの入力を待っている正常な状態です。
+
+```powershell
+python -m github_activity_db init-db
+python -m github_activity_db sync --person gvanrossum
+python -m github_activity_db mcp
+```
+
+MCPクライアントには、プロジェクトの仮想環境にあるPythonとモジュールを指定します。設定形式はクライアントごとに異なりますが、基本となる起動情報は次のとおりです。
+
+```json
+{
+  "command": "C:\\Users\\tetsu\\Documents\\Codex\\Github-Activity-DB\\.venv\\Scripts\\python.exe",
+  "args": ["-m", "github_activity_db", "--config", "C:\\Users\\tetsu\\Documents\\Codex\\Github-Activity-DB\\config\\targets.toml", "mcp"]
+}
+```
+
+公式MCP Inspectorでローカル接続を確認する場合は、Node.js 22.19以上の環境で次を実行します。
+
+```powershell
+npx @modelcontextprotocol/inspector .\.venv\Scripts\python.exe -m github_activity_db mcp
+```
 
 `status` はDBパスとサイズ、テーブル件数、人物・リポジトリ別最終同期、前回同期、未完了カーソル、API残数とリセット時刻、取得範囲制約を表示します。`--since` / `--until` は、利用者が明示した場合だけ過去範囲を追加取得するための指定です。
 

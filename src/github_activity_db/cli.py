@@ -129,6 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser = sub.add_parser("report")
     report_parser.add_argument("--days", type=int, default=30, choices=(7, 30, 90))
     sub.add_parser("serve")
+    sub.add_parser("mcp")
     return parser
 
 
@@ -146,5 +147,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         uvicorn.run("github_activity_db.web:create_app", factory=True,
                     host=settings.host, port=settings.port, reload=False)
+        return 0
+    if args.command == "mcp":
+        from .mcp_server import run_mcp_server
+
+        run_mcp_server(settings)
         return 0
     return 1
