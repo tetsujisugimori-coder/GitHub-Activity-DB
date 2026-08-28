@@ -12,6 +12,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "jinja2>=3.1,<4",
+  "mcp>=2,<3",
   "uvicorn>=0.30,<1",
 ]
 
@@ -20,6 +21,7 @@ test = ["pytest>=8.3,<10"]
 
 [project.scripts]
 github-activity-db = "github_activity_db.cli:main"
+github-activity-db-mcp = "github_activity_db.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/github_activity_db"]

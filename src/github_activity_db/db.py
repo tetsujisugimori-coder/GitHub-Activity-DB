@@ -17,6 +17,16 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return connection
 
 
+def connect_readonly(path: str | Path) -> sqlite3.Connection:
+    """Open an existing database without allowing MCP tools to modify it."""
+    db_path = Path(path).resolve()
+    connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=30)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
+    return connection
+
+
 @contextmanager
 def transaction(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     try:
@@ -25,4 +35,3 @@ def transaction(connection: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     except Exception:
         connection.rollback()
         raise
-
